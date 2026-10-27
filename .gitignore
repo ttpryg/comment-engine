@@ -1,0 +1,8 @@
+/.agents
+/vendor/
+/.phpunit.cache/
+.DS_Store
+*.log
+*.sqlite
+.env
+todo.md

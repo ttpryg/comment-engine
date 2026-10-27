@@ -1,0 +1,59 @@
+{
+    "name": "ttpryg/comment-engine",
+    "description": "A framework-agnostic standalone comment engine library for PHP.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Toto",
+            "email": "totoprayogo1916@gmail.com",
+            "homepage": "https://ttpryg.my.id"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "psr/event-dispatcher": "^1.0",
+        "ttpryg/database-migrator": "^1.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.20",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.0",
+        "rector/rector": "^2.6"
+    },
+    "suggest": {
+        "ttpryg/event-dispatcher": "Provides a lightweight PSR-14 event dispatcher implementation."
+    },
+    "autoload": {
+        "psr-4": {
+            "Ttpryg\\CommentEngine\\": "src/",
+            "Ttpryg\\CommentEngine\\Infrastructure\\": "infrastructure/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ttpryg\\CommentEngine\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.1.0"
+        },
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "scripts": {
+        "analyse": "vendor/bin/phpstan analyse",
+        "fix": [
+            "vendor/bin/rector process",
+            "vendor/bin/pint"
+        ],
+        "fix:check": [
+            "vendor/bin/rector process --dry-run",
+            "vendor/bin/pint --test",
+            "vendor/bin/phpstan analyse"
+        ],
+        "test": "vendor/bin/phpunit"
+    }
+}

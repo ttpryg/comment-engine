@@ -1,0 +1,16 @@
+# Auto-detect text files and perform LF normalization
+* text=auto
+
+# Exclude unnecessary files from export-zip / composer archives
+.docker export-ignore
+.dockerignore export-ignore
+.github export-ignore
+tests export-ignore
+
+.editorconfig export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+docker-compose.yml export-ignore
+phpstan.neon export-ignore
+phpunit.xml export-ignore
+rector.php export-ignore

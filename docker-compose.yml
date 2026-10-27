@@ -1,0 +1,36 @@
+name: comment-engine
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: comment-engine-php:8.1
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      COMMENT_ENGINE_MYSQL_DSN: "mysql:host=mysql;port=3306;dbname=comment_engine"
+      COMMENT_ENGINE_MYSQL_USER: root
+      COMMENT_ENGINE_MYSQL_PASSWORD: root
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["tail", "-f", "/dev/null"]
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: comment_engine
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
