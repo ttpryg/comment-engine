@@ -22,7 +22,7 @@
 composer require ttpryg/comment-engine
 ```
 
-> **Requirements:** PHP 8.1 or higher. The bundled PDO adapter also needs `pdo` plus the driver for your database.
+> **Requirements:** PHP 8.1 or higher with the `mbstring` extension. The bundled PDO adapter also needs `pdo` plus the driver for your database.
 >
 > Install `ttpryg/event-dispatcher` if you need a PSR-14 dispatcher implementation.
 
@@ -96,6 +96,8 @@ The event dispatcher is optional. Pass `null` (or omit it) when the module is us
 - `Infrastructure\Persistence\Pdo\PdoCommentRepository` (MySQL/MariaDB/SQLite).
 - `Infrastructure\Persistence\InMemory\InMemoryCommentRepository` (tests/prototypes).
 
+`save()` inserts a new comment and assigns its identifier. `update()`, `delete()`, and `restore()` return `false` when the comment no longer exists. `findAll()` and `count()` exclude soft-deleted comments; use `findById(..., includeTrashed: true)` or `findByTarget(..., includeTrashed: true)` to inspect trashed rows.
+
 ### Statuses
 
 `pending` → `approved` | `rejected` | `spam`. Moderation cannot apply `pending`; a moderator can change a decision later.
@@ -128,7 +130,7 @@ CREATE TABLE comments (
 
 Indexes: `(commentable_type, commentable_id, status, created_at)`, `(author_id, created_at)`, and `(status, created_at)`.
 
-The self-referencing foreign key cascades **hard** deletes to replies. Soft deletes affect only the selected comment. The migration is driver-aware and works on both MySQL/MariaDB and SQLite. SQLite enforces foreign keys only when the connection enables them, so run `PRAGMA foreign_keys = ON` on SQLite connections if you rely on the cascade.
+The self-referencing foreign key cascades **hard** deletes to replies. Soft deletes affect only the selected comment, so approved replies remain visible in public listings; use a hard delete to remove the whole reply subtree. The migration is driver-aware and works on both MySQL/MariaDB and SQLite. SQLite enforces foreign keys only when the connection enables them, so run `PRAGMA foreign_keys = ON` on SQLite connections if you rely on the cascade.
 
 ---
 
@@ -146,6 +148,8 @@ $migrator->appliedMigrations();    // applied history
 ```
 
 Migrations are never run automatically by the module. Run them from your deployment process.
+
+> **Warning:** `rollback()` reverts the latest migration, and the initial migration's `down()` drops the `comments` table with all comment data. Back up the database before rolling back in production.
 
 ---
 
@@ -173,7 +177,7 @@ docker compose run --rm app composer test
 docker compose run --rm app composer fix:check
 ```
 
-The `app` service waits for MySQL to become healthy before starting, so `composer test` exercises `MySqlSchemaTest` automatically. MySQL is exposed on host port `3307` to avoid clashing with a local server; override it with `MYSQL_PORT`.
+The `app` service waits for MySQL to become healthy before starting, so `composer test` exercises `MySqlSchemaTest` automatically. MySQL uses the `comment_engine_test` database and is exposed only on `127.0.0.1:3307` to avoid clashing with a local server; override the port with `MYSQL_PORT`. The MySQL integration test refuses to drop tables unless the database name ends with `_test`.
 
 Run an interactive shell with `docker compose run --rm app bash`.
 

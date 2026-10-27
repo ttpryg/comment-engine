@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [develop]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: PHP ${{ matrix.php }} Test
@@ -44,7 +47,7 @@ jobs:
         image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: comment_engine
+          MYSQL_DATABASE: comment_engine_test
         ports:
           - 3306:3306
         options: >-
@@ -54,7 +57,7 @@ jobs:
           --health-retries=10
 
     env:
-      COMMENT_ENGINE_MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=comment_engine
+      COMMENT_ENGINE_MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=comment_engine_test
       COMMENT_ENGINE_MYSQL_USER: root
       COMMENT_ENGINE_MYSQL_PASSWORD: root
 

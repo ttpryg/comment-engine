@@ -128,17 +128,8 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
 
     public function save(Comment $comment): Comment
     {
-        $id = $comment->getId();
-
-        if ($id === null) {
-            $id = $this->autoIncrement;
-            $comment->setId($id);
-        }
-
-        if (is_numeric($id) && (int) $id >= $this->autoIncrement) {
-            $this->autoIncrement = (int) $id + 1;
-        }
-
+        $id = $this->autoIncrement++;
+        $comment->setId($id);
         $this->comments[$id] = $comment;
 
         return $comment;

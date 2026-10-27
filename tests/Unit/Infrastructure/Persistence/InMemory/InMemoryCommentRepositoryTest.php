@@ -114,6 +114,8 @@ class InMemoryCommentRepositoryTest extends TestCase
         $this->assertNull($repository->findById($parentId));
         $this->assertSame($parent, $repository->findById($parentId, includeTrashed: true));
         $this->assertSame($reply, $repository->findById($replyId));
+        $this->assertCount(1, $repository->findByTarget('content', 10, status: null));
+        $this->assertCount(2, $repository->findByTarget('content', 10, status: null, includeTrashed: true));
 
         $this->assertTrue($repository->restore($parentId));
         $this->assertSame($parent, $repository->findById($parentId));
@@ -124,6 +126,16 @@ class InMemoryCommentRepositoryTest extends TestCase
 
         $this->assertFalse($repository->delete(999));
         $this->assertFalse($repository->restore(999));
+    }
+
+    public function test_save_always_assigns_a_new_identifier(): void
+    {
+        $repository = new InMemoryCommentRepository;
+
+        $comment = new Comment('content', 10, 7, 'Hello', id: 50);
+
+        $this->assertSame($comment, $repository->save($comment));
+        $this->assertSame(1, $comment->getId());
     }
 
     public function test_update_requires_an_existing_comment(): void

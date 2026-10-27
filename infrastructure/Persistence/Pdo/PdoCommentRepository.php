@@ -211,14 +211,15 @@ class PdoCommentRepository implements CommentRepositoryInterface
                 WHERE id = :id";
 
         $stmt = $this->pdo->prepare($sql);
-
-        return $stmt->execute([
+        $stmt->execute([
             'id' => $id,
             'body' => $comment->getBody(),
             'status' => $comment->getStatus(),
             'updated_at' => $comment->getUpdatedAt()->format('Y-m-d H:i:s'),
             'deleted_at' => $comment->getDeletedAt()?->format('Y-m-d H:i:s'),
         ]);
+
+        return $stmt->rowCount() > 0 || $this->exists($id);
     }
 
     public function delete(int|string $id, bool $softDelete = true): bool
@@ -226,25 +227,34 @@ class PdoCommentRepository implements CommentRepositoryInterface
         if ($softDelete) {
             $sql = "UPDATE {$this->table} SET deleted_at = :deleted_at WHERE id = :id";
             $stmt = $this->pdo->prepare($sql);
-
-            return $stmt->execute([
+            $stmt->execute([
                 'id' => $id,
                 'deleted_at' => (new DateTimeImmutable)->format('Y-m-d H:i:s'),
             ]);
+        } else {
+            $sql = "DELETE FROM {$this->table} WHERE id = :id";
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute(['id' => $id]);
         }
 
-        $sql = "DELETE FROM {$this->table} WHERE id = :id";
-        $stmt = $this->pdo->prepare($sql);
-
-        return $stmt->execute(['id' => $id]);
+        return $stmt->rowCount() > 0 || $this->exists($id);
     }
 
     public function restore(int|string $id): bool
     {
         $sql = "UPDATE {$this->table} SET deleted_at = NULL WHERE id = :id";
         $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['id' => $id]);
 
-        return $stmt->execute(['id' => $id]);
+        return $stmt->rowCount() > 0 || $this->exists($id);
+    }
+
+    private function exists(int|string $id): bool
+    {
+        $stmt = $this->pdo->prepare("SELECT 1 FROM {$this->table} WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $id]);
+
+        return $stmt->fetchColumn() !== false;
     }
 
     private function statusValue(CommentStatus|string|null $status): ?string

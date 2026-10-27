@@ -111,6 +111,15 @@ class CommentServiceTest extends TestCase
         $service->update($this->idOf($comment), 'Hijacked', 8);
     }
 
+    public function test_update_requires_an_existing_comment(): void
+    {
+        $service = new CommentService(new InMemoryCommentRepository);
+
+        $this->expectException(CommentNotFoundException::class);
+
+        $service->update(999, 'Missing', 7);
+    }
+
     public function test_guest_comments_cannot_be_updated(): void
     {
         $service = new CommentService(new InMemoryCommentRepository);
@@ -156,6 +165,15 @@ class CommentServiceTest extends TestCase
         $this->expectException(CommentAccessDeniedException::class);
 
         $service->delete($this->idOf($comment), 8);
+    }
+
+    public function test_delete_requires_an_existing_comment(): void
+    {
+        $service = new CommentService(new InMemoryCommentRepository);
+
+        $this->expectException(CommentNotFoundException::class);
+
+        $service->delete(999, 7);
     }
 
     public function test_author_can_hard_delete_their_comment(): void

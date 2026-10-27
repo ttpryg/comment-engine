@@ -127,11 +127,20 @@ class PdoCommentRepositoryTest extends TestCase
         $this->assertNull($this->repository->findById($commentId));
         $this->assertNotNull($this->repository->findById($commentId, includeTrashed: true));
         $this->assertCount(0, $this->repository->findByTarget('content', 10));
+        $this->assertCount(1, $this->repository->findByTarget('content', 10, includeTrashed: true));
 
         $this->assertTrue($this->repository->restore($commentId));
 
         $this->assertNotNull($this->repository->findById($commentId));
         $this->assertCount(1, $this->repository->findByTarget('content', 10));
+    }
+
+    public function test_mutations_report_failure_for_a_missing_comment(): void
+    {
+        $this->assertFalse($this->repository->update(new Comment('content', 10, 7, 'Missing', id: 999)));
+        $this->assertFalse($this->repository->delete(999));
+        $this->assertFalse($this->repository->delete(999, softDelete: false));
+        $this->assertFalse($this->repository->restore(999));
     }
 
     public function test_rejects_an_unsafe_table_name(): void

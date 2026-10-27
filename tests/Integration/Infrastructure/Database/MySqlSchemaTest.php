@@ -6,6 +6,7 @@ namespace Ttpryg\CommentEngine\Tests\Integration\Infrastructure\Database;
 
 use PDO;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Ttpryg\CommentEngine\Domain\Entity\Comment;
 use Ttpryg\CommentEngine\Infrastructure\Database\DatabaseMigrator;
 use Ttpryg\CommentEngine\Infrastructure\Persistence\Pdo\PdoCommentRepository;
@@ -32,6 +33,17 @@ class MySqlSchemaTest extends TestCase
         );
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+        $databaseStmt = $this->pdo->prepare('SELECT DATABASE()');
+        $databaseStmt->execute();
+        $database = (string) $databaseStmt->fetchColumn();
+
+        if (! str_ends_with($database, '_test')) {
+            throw new RuntimeException(sprintf(
+                'Refusing to drop tables in database "%s": the database name must end with "_test".',
+                $database
+            ));
+        }
+
         $this->resetSchema();
         (new DatabaseMigrator($this->pdo))->migrate();
     }
@@ -57,6 +69,17 @@ class MySqlSchemaTest extends TestCase
         $this->assertNull($repository->findById($this->idOf($reply), includeTrashed: true));
     }
 
+    public function test_mysql_migration_rolls_back_and_can_be_reapplied(): void
+    {
+        $migrator = new DatabaseMigrator($this->pdo);
+
+        $this->assertSame(['202610270001_create_comments_table'], $migrator->rollback());
+        $this->assertFalse($this->tableExists('comments'));
+
+        $this->assertSame(['202610270001_create_comments_table'], $migrator->migrate());
+        $this->assertTrue($this->tableExists('comments'));
+    }
+
     private function resetSchema(): void
     {
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
@@ -64,6 +87,17 @@ class MySqlSchemaTest extends TestCase
             $this->pdo->exec("DROP TABLE IF EXISTS {$table}");
         }
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = :table'
+        );
+        $stmt->execute(['table' => $table]);
+
+        return (int) $stmt->fetchColumn() > 0;
     }
 
     private function indexExists(string $index): bool

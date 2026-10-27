@@ -34,6 +34,8 @@ interface CommentRepositoryInterface
     ): array;
 
     /**
+     * Excludes soft-deleted comments.
+     *
      * @param  array<string, mixed>  $criteria
      * @param  array<string, 'ASC'|'DESC'>  $orderBy
      * @return list<Comment>
@@ -45,14 +47,30 @@ interface CommentRepositoryInterface
         array $orderBy = ['created_at' => 'DESC']
     ): array;
 
-    /** @param array<string, mixed> $criteria */
+    /**
+     * Excludes soft-deleted comments.
+     *
+     * @param  array<string, mixed>  $criteria
+     */
     public function count(array $criteria = []): int;
 
+    /**
+     * Inserts a new comment and assigns its identifier.
+     */
     public function save(Comment $comment): Comment;
 
+    /**
+     * Persists changes to an existing comment; false when the comment no longer exists.
+     */
     public function update(Comment $comment): bool;
 
+    /**
+     * Returns false when the comment does not exist.
+     */
     public function delete(int|string $id, bool $softDelete = true): bool;
 
+    /**
+     * Returns false when the comment does not exist.
+     */
     public function restore(int|string $id): bool;
 }
