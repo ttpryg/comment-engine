@@ -11,6 +11,7 @@ use PDOStatement;
 use RuntimeException;
 use Ttpryg\CommentEngine\Domain\Entity\Comment;
 use Ttpryg\CommentEngine\Domain\Enum\CommentStatus;
+use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTenantException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidOrderByException;
 use Ttpryg\CommentEngine\Domain\Repository\CommentRepositoryInterface;
 
@@ -39,15 +40,25 @@ class PdoCommentRepository implements CommentRepositoryInterface
         $this->table = $table;
     }
 
-    public function findById(int|string $id, bool $includeTrashed = false): ?Comment
+    public function findById(int|string|null $tenantId, int|string $id, bool $includeTrashed = false): ?Comment
     {
-        $sql = "SELECT * FROM {$this->table} WHERE id = :id";
-        if (! $includeTrashed) {
-            $sql .= ' AND deleted_at IS NULL';
+        $where = ['id = :id'];
+        $params = ['id' => $id];
+
+        $tenant = $this->tenantValue($tenantId);
+        if ($tenant !== null) {
+            $where[] = 'tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
         }
 
+        if (! $includeTrashed) {
+            $where[] = 'deleted_at IS NULL';
+        }
+
+        $sql = "SELECT * FROM {$this->table} WHERE ".implode(' AND ', $where);
+
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['id' => $id]);
+        $stmt->execute($params);
 
         $data = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -56,6 +67,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
 
     /** @return list<Comment> */
     public function findByTarget(
+        int|string|null $tenantId,
         string $commentableType,
         int|string $commentableId,
         CommentStatus|string|null $status = CommentStatus::APPROVED,
@@ -74,6 +86,12 @@ class PdoCommentRepository implements CommentRepositoryInterface
             'commentable_type' => trim($commentableType),
             'commentable_id' => (string) $commentableId,
         ];
+
+        $tenant = $this->tenantValue($tenantId);
+        if ($tenant !== null) {
+            $where[] = 'tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
+        }
 
         $statusValue = $this->statusValue($status);
         if ($statusValue !== null) {
@@ -104,6 +122,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
 
     /** @return list<Comment> */
     public function findByAuthorId(
+        int|string|null $tenantId,
         int|string $authorId,
         CommentStatus|string|null $status = null,
         int $limit = 20,
@@ -116,7 +135,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
             $criteria['status'] = $statusValue;
         }
 
-        return $this->findAll($criteria, $limit, $offset);
+        return $this->findAll($tenantId, $criteria, $limit, $offset);
     }
 
     /**
@@ -125,6 +144,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
      * @return list<Comment>
      */
     public function findAll(
+        int|string|null $tenantId,
         array $criteria = [],
         int $limit = 20,
         int $offset = 0,
@@ -133,7 +153,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
         $limit = min(max(1, $limit), self::MAX_LIMIT);
         $offset = max(0, $offset);
 
-        [$whereSql, $params] = $this->buildWhere($criteria);
+        [$whereSql, $params] = $this->buildWhere($criteria, $tenantId);
         $orderSql = $this->buildOrderBy($orderBy);
 
         $sql = sprintf(
@@ -155,9 +175,9 @@ class PdoCommentRepository implements CommentRepositoryInterface
     }
 
     /** @param array<string, mixed> $criteria */
-    public function count(array $criteria = []): int
+    public function count(int|string|null $tenantId, array $criteria = []): int
     {
-        [$whereSql, $params] = $this->buildWhere($criteria);
+        [$whereSql, $params] = $this->buildWhere($criteria, $tenantId);
 
         $sql = "SELECT COUNT(*) FROM {$this->table} WHERE {$whereSql}";
 
@@ -170,8 +190,8 @@ class PdoCommentRepository implements CommentRepositoryInterface
     public function save(Comment $comment): Comment
     {
         $sql = "INSERT INTO {$this->table}
-                (commentable_type, commentable_id, parent_id, author_id, body, status, created_at, updated_at, deleted_at)
-                VALUES (:commentable_type, :commentable_id, :parent_id, :author_id, :body, :status, :created_at, :updated_at, :deleted_at)";
+                (commentable_type, commentable_id, parent_id, author_id, tenant_id, body, status, created_at, updated_at, deleted_at)
+                VALUES (:commentable_type, :commentable_id, :parent_id, :author_id, :tenant_id, :body, :status, :created_at, :updated_at, :deleted_at)";
 
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
@@ -179,6 +199,7 @@ class PdoCommentRepository implements CommentRepositoryInterface
             'commentable_id' => (string) $comment->getCommentableId(),
             'parent_id' => $comment->getParentId(),
             'author_id' => $comment->getAuthorId(),
+            'tenant_id' => $this->tenantValue($comment->getTenantId()),
             'body' => $comment->getBody(),
             'status' => $comment->getStatus(),
             'created_at' => $comment->getCreatedAt()->format('Y-m-d H:i:s'),
@@ -203,6 +224,8 @@ class PdoCommentRepository implements CommentRepositoryInterface
             return false;
         }
 
+        $tenant = $this->tenantValue($comment->getTenantId());
+
         $sql = "UPDATE {$this->table}
                 SET body = :body,
                     status = :status,
@@ -210,49 +233,84 @@ class PdoCommentRepository implements CommentRepositoryInterface
                     deleted_at = :deleted_at
                 WHERE id = :id";
 
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
+        $params = [
             'id' => $id,
             'body' => $comment->getBody(),
             'status' => $comment->getStatus(),
             'updated_at' => $comment->getUpdatedAt()->format('Y-m-d H:i:s'),
             'deleted_at' => $comment->getDeletedAt()?->format('Y-m-d H:i:s'),
-        ]);
+        ];
 
-        return $stmt->rowCount() > 0 || $this->exists($id);
-    }
-
-    public function delete(int|string $id, bool $softDelete = true): bool
-    {
-        if ($softDelete) {
-            $sql = "UPDATE {$this->table} SET deleted_at = :deleted_at WHERE id = :id";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute([
-                'id' => $id,
-                'deleted_at' => (new DateTimeImmutable)->format('Y-m-d H:i:s'),
-            ]);
-        } else {
-            $sql = "DELETE FROM {$this->table} WHERE id = :id";
-            $stmt = $this->pdo->prepare($sql);
-            $stmt->execute(['id' => $id]);
+        if ($tenant !== null) {
+            $sql .= ' AND tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
         }
 
-        return $stmt->rowCount() > 0 || $this->exists($id);
-    }
-
-    public function restore(int|string $id): bool
-    {
-        $sql = "UPDATE {$this->table} SET deleted_at = NULL WHERE id = :id";
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['id' => $id]);
+        $stmt->execute($params);
 
-        return $stmt->rowCount() > 0 || $this->exists($id);
+        return $stmt->rowCount() > 0 || $this->exists($tenant, $id);
     }
 
-    private function exists(int|string $id): bool
+    public function delete(int|string|null $tenantId, int|string $id, bool $softDelete = true): bool
     {
-        $stmt = $this->pdo->prepare("SELECT 1 FROM {$this->table} WHERE id = :id LIMIT 1");
-        $stmt->execute(['id' => $id]);
+        $tenant = $this->tenantValue($tenantId);
+
+        $where = 'id = :id';
+        $params = ['id' => $id];
+
+        if ($tenant !== null) {
+            $where .= ' AND tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
+        }
+
+        if ($softDelete) {
+            $sql = "UPDATE {$this->table} SET deleted_at = :deleted_at WHERE {$where}";
+            $params['deleted_at'] = (new DateTimeImmutable)->format('Y-m-d H:i:s');
+        } else {
+            $sql = "DELETE FROM {$this->table} WHERE {$where}";
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->rowCount() > 0 || $this->exists($tenantId, $id);
+    }
+
+    public function restore(int|string|null $tenantId, int|string $id): bool
+    {
+        $tenant = $this->tenantValue($tenantId);
+
+        $sql = "UPDATE {$this->table} SET deleted_at = NULL WHERE id = :id";
+        $params = ['id' => $id];
+
+        if ($tenant !== null) {
+            $sql .= ' AND tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->rowCount() > 0 || $this->exists($tenantId, $id);
+    }
+
+    private function exists(int|string|null $tenantId, int|string $id): bool
+    {
+        $tenant = $this->tenantValue($tenantId);
+
+        $sql = "SELECT 1 FROM {$this->table} WHERE id = :id";
+        $params = ['id' => $id];
+
+        if ($tenant !== null) {
+            $sql .= ' AND tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
+        }
+
+        $sql .= ' LIMIT 1';
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
 
         return $stmt->fetchColumn() !== false;
     }
@@ -262,14 +320,47 @@ class PdoCommentRepository implements CommentRepositoryInterface
         return $status instanceof CommentStatus ? $status->value : $status;
     }
 
+    private function tenantValue(int|string|null $tenantId): ?string
+    {
+        if ($tenantId === null) {
+            return null;
+        }
+
+        if (is_int($tenantId)) {
+            return (string) $tenantId;
+        }
+
+        $tenantId = trim($tenantId);
+
+        if ($tenantId === '') {
+            throw InvalidCommentTenantException::empty();
+        }
+
+        if (mb_strlen($tenantId) > Comment::MAX_TENANT_ID_LENGTH) {
+            throw InvalidCommentTenantException::tooLong(Comment::MAX_TENANT_ID_LENGTH);
+        }
+
+        return $tenantId;
+    }
+
     /**
      * @param  array<string, mixed>  $criteria
      * @return array{0: string, 1: array<string, mixed>}
      */
-    private function buildWhere(array $criteria): array
+    private function buildWhere(array $criteria, int|string|null $tenantId): array
     {
+        if (array_key_exists('tenant_id', $criteria)) {
+            throw new InvalidArgumentException('Use the $tenantId argument instead of a tenant_id criterion.');
+        }
+
         $where = ['deleted_at IS NULL'];
         $params = [];
+
+        $tenant = $this->tenantValue($tenantId);
+        if ($tenant !== null) {
+            $where[] = 'tenant_id = :tenant_id';
+            $params['tenant_id'] = $tenant;
+        }
 
         if (isset($criteria['commentable_type']) && is_string($criteria['commentable_type'])) {
             $where[] = 'commentable_type = :commentable_type';
@@ -356,7 +447,8 @@ class PdoCommentRepository implements CommentRepositoryInterface
             id: $this->idOrNull($data['id'] ?? null),
             createdAt: $this->dateTimeOrNull($data['created_at'] ?? null),
             updatedAt: $this->dateTimeOrNull($data['updated_at'] ?? null),
-            deletedAt: $this->dateTimeOrNull($data['deleted_at'] ?? null)
+            deletedAt: $this->dateTimeOrNull($data['deleted_at'] ?? null),
+            tenantId: $this->idOrNull($data['tenant_id'] ?? null)
         );
     }
 

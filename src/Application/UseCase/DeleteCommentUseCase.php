@@ -22,22 +22,23 @@ final class DeleteCommentUseCase
      *                             authorized the actor as a moderator.
      */
     public function execute(
+        int|string|null $tenantId,
         int|string $id,
         int|string $actorId,
         bool $asModerator = false,
         bool $softDelete = true
     ): bool {
-        $comment = $this->commentRepository->findById($id) ?? throw CommentNotFoundException::byId($id);
+        $comment = $this->commentRepository->findById($tenantId, $id) ?? throw CommentNotFoundException::byId($id);
 
         if (! $asModerator
             && ($comment->getAuthorId() === null || (string) $comment->getAuthorId() !== (string) $actorId)) {
             throw CommentAccessDeniedException::delete($id);
         }
 
-        $result = $this->commentRepository->delete($id, $softDelete);
+        $result = $this->commentRepository->delete($tenantId, $id, $softDelete);
 
         if ($result) {
-            $this->eventDispatcher?->dispatch(new CommentDeletedEvent($id, $softDelete));
+            $this->eventDispatcher?->dispatch(new CommentDeletedEvent($id, $softDelete, $comment->getTenantId()));
         }
 
         return $result;

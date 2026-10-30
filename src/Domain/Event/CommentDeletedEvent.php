@@ -8,6 +8,7 @@ final class CommentDeletedEvent
 {
     public function __construct(
         public readonly int|string $commentId,
-        public readonly bool $softDeleted
+        public readonly bool $softDeleted,
+        public readonly int|string|null $tenantId = null
     ) {}
 }

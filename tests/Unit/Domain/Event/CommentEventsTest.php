@@ -29,6 +29,14 @@ class CommentEventsTest extends TestCase
 
         $this->assertSame(42, $event->commentId);
         $this->assertTrue($event->softDeleted);
+        $this->assertNull($event->tenantId);
+    }
+
+    public function test_deleted_event_can_expose_the_tenant(): void
+    {
+        $event = new CommentDeletedEvent(commentId: 42, softDeleted: false, tenantId: 'org-1');
+
+        $this->assertSame('org-1', $event->tenantId);
     }
 
     public function test_moderation_events_expose_the_moderator(): void

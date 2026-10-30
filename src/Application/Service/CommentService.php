@@ -15,6 +15,12 @@ use Ttpryg\CommentEngine\Domain\Enum\CommentStatus;
 use Ttpryg\CommentEngine\Domain\Exception\CommentNotFoundException;
 use Ttpryg\CommentEngine\Domain\Repository\CommentRepositoryInterface;
 
+/**
+ * Convenience facade over the comment use cases.
+ *
+ * Methods that take several int|string identifiers (tenant, comment, actor)
+ * should be called with named arguments to avoid silently swapping them.
+ */
 class CommentService
 {
     private readonly CreateCommentUseCase $createCommentUseCase;
@@ -40,27 +46,37 @@ class CommentService
         return $this->createCommentUseCase->execute($request);
     }
 
-    public function update(int|string $id, string $body, int|string $actorId): Comment
-    {
-        return $this->updateCommentUseCase->execute($id, $body, $actorId);
+    public function update(
+        int|string|null $tenantId,
+        int|string $id,
+        string $body,
+        int|string $actorId
+    ): Comment {
+        return $this->updateCommentUseCase->execute($tenantId, $id, $body, $actorId);
     }
 
     public function delete(
+        int|string|null $tenantId,
         int|string $id,
         int|string $actorId,
         bool $asModerator = false,
         bool $softDelete = true
     ): bool {
-        return $this->deleteCommentUseCase->execute($id, $actorId, $asModerator, $softDelete);
+        return $this->deleteCommentUseCase->execute($tenantId, $id, $actorId, $asModerator, $softDelete);
     }
 
-    public function moderate(int|string $id, CommentStatus|string $status, int|string $moderatorId): Comment
-    {
-        return $this->moderateCommentUseCase->execute($id, $status, $moderatorId);
+    public function moderate(
+        int|string|null $tenantId,
+        int|string $id,
+        CommentStatus|string $status,
+        int|string $moderatorId
+    ): Comment {
+        return $this->moderateCommentUseCase->execute($tenantId, $id, $status, $moderatorId);
     }
 
     /** @return list<Comment> */
     public function getComments(
+        int|string|null $tenantId,
         string $commentableType,
         int|string $commentableId,
         CommentStatus|string|null $status = CommentStatus::APPROVED,
@@ -68,6 +84,7 @@ class CommentService
         int $offset = 0
     ): array {
         return $this->commentRepository->findByTarget(
+            $tenantId,
             $commentableType,
             $commentableId,
             $status,
@@ -76,18 +93,22 @@ class CommentService
         );
     }
 
-    public function getComment(int|string $id, bool $includeTrashed = false): Comment
-    {
-        return $this->commentRepository->findById($id, $includeTrashed)
+    public function getComment(
+        int|string|null $tenantId,
+        int|string $id,
+        bool $includeTrashed = false
+    ): Comment {
+        return $this->commentRepository->findById($tenantId, $id, $includeTrashed)
             ?? throw CommentNotFoundException::byId($id);
     }
 
     public function countComments(
+        int|string|null $tenantId,
         string $commentableType,
         int|string $commentableId,
         CommentStatus|string|null $status = CommentStatus::APPROVED
     ): int {
-        return $this->commentRepository->count([
+        return $this->commentRepository->count($tenantId, [
             'commentable_type' => $commentableType,
             'commentable_id' => $commentableId,
             'status' => $status,

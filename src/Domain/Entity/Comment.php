@@ -12,6 +12,7 @@ use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentBodyException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentParentException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentStatusException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTargetException;
+use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTenantException;
 
 class Comment
 {
@@ -19,11 +20,15 @@ class Comment
 
     public const MAX_COMMENTABLE_ID_LENGTH = 100;
 
+    public const MAX_TENANT_ID_LENGTH = 100;
+
     private readonly string $commentableType;
 
     private readonly int|string $commentableId;
 
     private readonly int|string|null $authorId;
+
+    private readonly int|string|null $tenantId;
 
     private readonly int|string|null $parentId;
 
@@ -45,11 +50,13 @@ class Comment
         private int|string|null $id = null,
         ?DateTimeInterface $createdAt = null,
         ?DateTimeInterface $updatedAt = null,
-        private ?DateTimeInterface $deletedAt = null
+        private ?DateTimeInterface $deletedAt = null,
+        int|string|null $tenantId = null
     ) {
         $this->commentableType = $this->normalizeCommentableType($commentableType);
         $this->commentableId = $this->normalizeCommentableId($commentableId);
         $this->authorId = $this->normalizeAuthorId($authorId);
+        $this->tenantId = $this->normalizeTenantId($tenantId);
         $this->parentId = $this->normalizeParentId($parentId);
 
         if ($this->id !== null && $this->parentId !== null && (string) $this->id === (string) $this->parentId) {
@@ -92,6 +99,11 @@ class Comment
     public function getAuthorId(): int|string|null
     {
         return $this->authorId;
+    }
+
+    public function getTenantId(): int|string|null
+    {
+        return $this->tenantId;
     }
 
     public function getBody(): string
@@ -171,6 +183,7 @@ class Comment
             'commentable_id' => $this->commentableId,
             'parent_id' => $this->parentId,
             'author_id' => $this->authorId,
+            'tenant_id' => $this->tenantId,
             'body' => $this->body,
             'status' => $this->status->value,
             'created_at' => $this->createdAt->format(DateTimeInterface::ATOM),
@@ -222,6 +235,23 @@ class Comment
         }
 
         return $authorId;
+    }
+
+    private function normalizeTenantId(int|string|null $tenantId): int|string|null
+    {
+        if (is_string($tenantId)) {
+            $tenantId = trim($tenantId);
+
+            if ($tenantId === '') {
+                throw InvalidCommentTenantException::empty();
+            }
+
+            if (mb_strlen($tenantId) > self::MAX_TENANT_ID_LENGTH) {
+                throw InvalidCommentTenantException::tooLong(self::MAX_TENANT_ID_LENGTH);
+            }
+        }
+
+        return $tenantId;
     }
 
     private function normalizeParentId(int|string|null $parentId): int|string|null

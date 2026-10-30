@@ -13,6 +13,7 @@ use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentBodyException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentParentException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentStatusException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTargetException;
+use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTenantException;
 
 class CommentEntityTest extends TestCase
 {
@@ -26,6 +27,7 @@ class CommentEntityTest extends TestCase
         $this->assertSame(7, $comment->getAuthorId());
         $this->assertSame('Hello world', $comment->getBody());
         $this->assertSame('pending', $comment->getStatus());
+        $this->assertNull($comment->getTenantId());
         $this->assertNull($comment->getDeletedAt());
         $this->assertInstanceOf(DateTimeImmutable::class, $comment->getCreatedAt());
         $this->assertInstanceOf(DateTimeImmutable::class, $comment->getUpdatedAt());
@@ -96,6 +98,26 @@ class CommentEntityTest extends TestCase
         new Comment('content', 1, '  ', 'Hello');
     }
 
+    public function test_tenant_is_trimmed_and_preserves_numeric_ids(): void
+    {
+        $this->assertSame('org-1', (new Comment('content', 1, 7, 'Hello', tenantId: ' org-1 '))->getTenantId());
+        $this->assertSame(5, (new Comment('content', 1, 7, 'Hello', tenantId: 5))->getTenantId());
+    }
+
+    public function test_empty_tenant_id_is_rejected(): void
+    {
+        $this->expectException(InvalidCommentTenantException::class);
+
+        new Comment('content', 1, 7, 'Hello', tenantId: '  ');
+    }
+
+    public function test_tenant_id_cannot_exceed_the_schema_length(): void
+    {
+        $this->expectException(InvalidCommentTenantException::class);
+
+        new Comment('content', 1, 7, 'Hello', tenantId: str_repeat('a', Comment::MAX_TENANT_ID_LENGTH + 1));
+    }
+
     public function test_invalid_status_is_rejected(): void
     {
         $this->expectException(InvalidCommentStatusException::class);
@@ -122,7 +144,7 @@ class CommentEntityTest extends TestCase
 
     public function test_to_array_exposes_the_comment_fields(): void
     {
-        $comment = new Comment('content', 10, 7, 'Hello', parentId: 2, id: 5);
+        $comment = new Comment('content', 10, 7, 'Hello', parentId: 2, id: 5, tenantId: 'org-1');
         $comment->approve();
 
         $data = $comment->toArray();
@@ -132,6 +154,7 @@ class CommentEntityTest extends TestCase
         $this->assertSame(10, $data['commentable_id']);
         $this->assertSame(2, $data['parent_id']);
         $this->assertSame(7, $data['author_id']);
+        $this->assertSame('org-1', $data['tenant_id']);
         $this->assertSame('Hello', $data['body']);
         $this->assertSame('approved', $data['status']);
         $this->assertNull($data['deleted_at']);

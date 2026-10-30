@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional tenant scoping. Comments carry a nullable `tenant_id`;
+  `CommentService`, the use cases, and the repository port accept an explicit
+  `tenantId` and only see/mutate rows for that tenant. A `null` tenant keeps the
+  previous unscoped behaviour. Cross-tenant access by ID surfaces as
+  `CommentNotFoundException`.
+- `InvalidCommentTenantException` for empty or overlong tenant identifiers.
+- Migration `202610300001_add_tenant_id_to_comments_table` adds the column and
+  tenant-leading listing/author indexes.
+- `CommentDeletedEvent` exposes an optional `tenantId`.
+
+### Changed (BC)
+
+- `CreateCommentRequest` now requires `tenantId` as its first argument.
+- `CommentService::update()`, `delete()`, `moderate()`, `getComments()`,
+  `getComment()`, and `countComments()` take `tenantId` as their first argument.
+- `CommentRepositoryInterface` scopes `findById`, `findByTarget`,
+  `findByAuthorId`, `findAll`, `count`, `delete`, and `restore` by `tenantId`.
+  The `tenant_id` key is rejected inside `findAll()`/`count()` criteria.
+- A major version bump is recommended because the public API and repository port
+  changed.
+
 ## [1.0.0] - 2026-10-27
 
 ### Added

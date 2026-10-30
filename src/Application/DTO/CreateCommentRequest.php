@@ -7,6 +7,7 @@ namespace Ttpryg\CommentEngine\Application\DTO;
 final class CreateCommentRequest
 {
     public function __construct(
+        public readonly int|string|null $tenantId,
         public readonly string $commentableType,
         public readonly int|string $commentableId,
         public readonly int|string|null $authorId,

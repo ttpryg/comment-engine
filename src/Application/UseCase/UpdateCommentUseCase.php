@@ -19,9 +19,9 @@ final class UpdateCommentUseCase
         private readonly ?EventDispatcherInterface $eventDispatcher = null
     ) {}
 
-    public function execute(int|string $id, string $body, int|string $actorId): Comment
+    public function execute(int|string|null $tenantId, int|string $id, string $body, int|string $actorId): Comment
     {
-        $comment = $this->commentRepository->findById($id) ?? throw CommentNotFoundException::byId($id);
+        $comment = $this->commentRepository->findById($tenantId, $id) ?? throw CommentNotFoundException::byId($id);
 
         if ($comment->getAuthorId() === null || (string) $comment->getAuthorId() !== (string) $actorId) {
             throw CommentAccessDeniedException::update($id);

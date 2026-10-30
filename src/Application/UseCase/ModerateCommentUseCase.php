@@ -23,15 +23,19 @@ final class ModerateCommentUseCase
         private readonly ?EventDispatcherInterface $eventDispatcher = null
     ) {}
 
-    public function execute(int|string $id, CommentStatus|string $status, int|string $moderatorId): Comment
-    {
+    public function execute(
+        int|string|null $tenantId,
+        int|string $id,
+        CommentStatus|string $status,
+        int|string $moderatorId
+    ): Comment {
         $moderationStatus = $this->normalizeStatus($status);
 
         if (! in_array($moderationStatus, [CommentStatus::APPROVED, CommentStatus::REJECTED, CommentStatus::SPAM], true)) {
             throw InvalidModerationStatusException::forStatus($moderationStatus);
         }
 
-        $comment = $this->commentRepository->findById($id) ?? throw CommentNotFoundException::byId($id);
+        $comment = $this->commentRepository->findById($tenantId, $id) ?? throw CommentNotFoundException::byId($id);
 
         $comment->setStatus($moderationStatus);
         $comment->setUpdatedAt(new DateTimeImmutable);

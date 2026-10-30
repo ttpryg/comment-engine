@@ -6,8 +6,10 @@ namespace Ttpryg\CommentEngine\Infrastructure\Persistence\InMemory;
 
 use DateTimeImmutable;
 use DateTimeInterface;
+use InvalidArgumentException;
 use Ttpryg\CommentEngine\Domain\Entity\Comment;
 use Ttpryg\CommentEngine\Domain\Enum\CommentStatus;
+use Ttpryg\CommentEngine\Domain\Exception\InvalidCommentTenantException;
 use Ttpryg\CommentEngine\Domain\Exception\InvalidOrderByException;
 use Ttpryg\CommentEngine\Domain\Repository\CommentRepositoryInterface;
 
@@ -25,11 +27,16 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
 
     private const MAX_LIMIT = 100;
 
-    public function findById(int|string $id, bool $includeTrashed = false): ?Comment
+    public function findById(int|string|null $tenantId, int|string $id, bool $includeTrashed = false): ?Comment
     {
+        $tenant = $this->tenantValue($tenantId);
         $comment = $this->comments[$id] ?? null;
 
         if (! $comment instanceof Comment) {
+            return null;
+        }
+
+        if ($tenant !== null && ! $this->matchesTenant($comment, $tenant)) {
             return null;
         }
 
@@ -42,6 +49,7 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
 
     /** @return list<Comment> */
     public function findByTarget(
+        int|string|null $tenantId,
         string $commentableType,
         int|string $commentableId,
         CommentStatus|string|null $status = CommentStatus::APPROVED,
@@ -52,13 +60,18 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
         $limit = min(max(1, $limit), self::MAX_LIMIT);
         $offset = max(0, $offset);
 
+        $tenant = $this->tenantValue($tenantId);
         $commentableType = trim($commentableType);
         $commentableId = (string) $commentableId;
         $statusValue = $status instanceof CommentStatus ? $status->value : $status;
 
         $results = array_values(array_filter(
             $this->comments,
-            function (Comment $comment) use ($commentableType, $commentableId, $statusValue, $includeTrashed): bool {
+            function (Comment $comment) use ($tenant, $commentableType, $commentableId, $statusValue, $includeTrashed): bool {
+                if ($tenant !== null && ! $this->matchesTenant($comment, $tenant)) {
+                    return false;
+                }
+
                 if (! $includeTrashed && $comment->getDeletedAt() instanceof DateTimeInterface) {
                     return false;
                 }
@@ -79,6 +92,7 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
 
     /** @return list<Comment> */
     public function findByAuthorId(
+        int|string|null $tenantId,
         int|string $authorId,
         CommentStatus|string|null $status = null,
         int $limit = 20,
@@ -90,7 +104,7 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
             $criteria['status'] = $status;
         }
 
-        return $this->findAll($criteria, $limit, $offset);
+        return $this->findAll($tenantId, $criteria, $limit, $offset);
     }
 
     /**
@@ -99,6 +113,7 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
      * @return list<Comment>
      */
     public function findAll(
+        int|string|null $tenantId,
         array $criteria = [],
         int $limit = 20,
         int $offset = 0,
@@ -107,9 +122,12 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
         $limit = min(max(1, $limit), self::MAX_LIMIT);
         $offset = max(0, $offset);
 
+        $this->assertCriteriaHasNoTenant($criteria);
+        $tenant = $this->tenantValue($tenantId);
+
         $results = array_values(array_filter(
             $this->comments,
-            fn (Comment $comment): bool => $this->matchesCriteria($comment, $criteria)
+            fn (Comment $comment): bool => $this->matchesCriteria($comment, $criteria, $tenant)
         ));
 
         $results = $this->sort($results, $orderBy);
@@ -118,11 +136,14 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
     }
 
     /** @param array<string, mixed> $criteria */
-    public function count(array $criteria = []): int
+    public function count(int|string|null $tenantId, array $criteria = []): int
     {
+        $this->assertCriteriaHasNoTenant($criteria);
+        $tenant = $this->tenantValue($tenantId);
+
         return count(array_filter(
             $this->comments,
-            fn (Comment $comment): bool => $this->matchesCriteria($comment, $criteria)
+            fn (Comment $comment): bool => $this->matchesCriteria($comment, $criteria, $tenant)
         ));
     }
 
@@ -143,16 +164,30 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
             return false;
         }
 
-        $this->comments[$id] = $comment;
+        $stored = $this->comments[$id];
+        $tenant = $this->tenantValue($comment->getTenantId());
+        if ($tenant !== null && ! $this->matchesTenant($stored, $tenant)) {
+            return false;
+        }
+
+        // An unscoped update must not erase the tenant stored in the row.
+        $this->comments[$id] = $tenant === null && $stored->getTenantId() !== null
+            ? $this->withTenant($comment, $stored->getTenantId())
+            : $comment;
 
         return true;
     }
 
-    public function delete(int|string $id, bool $softDelete = true): bool
+    public function delete(int|string|null $tenantId, int|string $id, bool $softDelete = true): bool
     {
+        $tenant = $this->tenantValue($tenantId);
         $comment = $this->comments[$id] ?? null;
 
         if (! $comment instanceof Comment) {
+            return false;
+        }
+
+        if ($tenant !== null && ! $this->matchesTenant($comment, $tenant)) {
             return false;
         }
 
@@ -168,11 +203,16 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
         return true;
     }
 
-    public function restore(int|string $id): bool
+    public function restore(int|string|null $tenantId, int|string $id): bool
     {
+        $tenant = $this->tenantValue($tenantId);
         $comment = $this->comments[$id] ?? null;
 
         if (! $comment instanceof Comment) {
+            return false;
+        }
+
+        if ($tenant !== null && ! $this->matchesTenant($comment, $tenant)) {
             return false;
         }
 
@@ -181,6 +221,10 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
         return true;
     }
 
+    /**
+     * Hard deletes cascade by parent_id only, mirroring the database FK, so
+     * descendants are removed regardless of their tenant.
+     */
     private function deleteDescendants(int|string $parentId): void
     {
         foreach ($this->comments as $id => $comment) {
@@ -194,9 +238,13 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
     }
 
     /** @param array<string, mixed> $criteria */
-    private function matchesCriteria(Comment $comment, array $criteria): bool
+    private function matchesCriteria(Comment $comment, array $criteria, ?string $tenant): bool
     {
         if ($comment->getDeletedAt() instanceof DateTimeInterface) {
+            return false;
+        }
+
+        if ($tenant !== null && ! $this->matchesTenant($comment, $tenant)) {
             return false;
         }
 
@@ -241,6 +289,59 @@ class InMemoryCommentRepository implements CommentRepositoryInterface
         }
 
         return true;
+    }
+
+    private function matchesTenant(Comment $comment, string $tenant): bool
+    {
+        return $comment->getTenantId() !== null && (string) $comment->getTenantId() === $tenant;
+    }
+
+    private function withTenant(Comment $comment, int|string $tenantId): Comment
+    {
+        return new Comment(
+            commentableType: $comment->getCommentableType(),
+            commentableId: $comment->getCommentableId(),
+            authorId: $comment->getAuthorId(),
+            body: $comment->getBody(),
+            status: $comment->getStatus(),
+            parentId: $comment->getParentId(),
+            id: $comment->getId(),
+            createdAt: $comment->getCreatedAt(),
+            updatedAt: $comment->getUpdatedAt(),
+            deletedAt: $comment->getDeletedAt(),
+            tenantId: $tenantId
+        );
+    }
+
+    /** @param array<string, mixed> $criteria */
+    private function assertCriteriaHasNoTenant(array $criteria): void
+    {
+        if (array_key_exists('tenant_id', $criteria)) {
+            throw new InvalidArgumentException('Use the $tenantId argument instead of a tenant_id criterion.');
+        }
+    }
+
+    private function tenantValue(int|string|null $tenantId): ?string
+    {
+        if ($tenantId === null) {
+            return null;
+        }
+
+        if (is_int($tenantId)) {
+            return (string) $tenantId;
+        }
+
+        $tenantId = trim($tenantId);
+
+        if ($tenantId === '') {
+            throw InvalidCommentTenantException::empty();
+        }
+
+        if (mb_strlen($tenantId) > Comment::MAX_TENANT_ID_LENGTH) {
+            throw InvalidCommentTenantException::tooLong(Comment::MAX_TENANT_ID_LENGTH);
+        }
+
+        return $tenantId;
     }
 
     /**

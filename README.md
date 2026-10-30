@@ -1,6 +1,6 @@
 # CommentEngine Library
 
-`ttpryg/comment-engine` is a framework-agnostic, PSR-14 native PHP library for threaded comments with moderation, polymorphic commentable resources, optional author attribution, soft deletes, and a database schema managed by [`ttpryg/database-migrator`](https://github.com/ttpryg/database-migrator).
+`ttpryg/comment-engine` is a framework-agnostic, PSR-14 native PHP library for threaded comments with moderation, polymorphic commentable resources, optional author attribution, optional tenant scoping, soft deletes, and a database schema managed by [`ttpryg/database-migrator`](https://github.com/ttpryg/database-migrator).
 
 ## 🌟 Key Features
 
@@ -10,6 +10,7 @@
 - **Moderation Lifecycle**: Comments start as `pending` and can be `approved`, `rejected`, or marked as `spam`.
 - **Polymorphic Targets**: `commentable_type` + `commentable_id` attach comments to content, products, or any other resource without schema changes.
 - **Author Ownership**: `author_id` links comments to users from `auth-user`; guest comments use `null`.
+- **Optional Tenancy**: a nullable `tenant_id` scopes every read and write. Pass a tenant to isolate comments, or `null` for the previous unscoped behaviour.
 - **Explicit Use Cases**: create, update, delete, and moderate actions live in `Application\UseCase`, with `CommentService` as a convenience facade.
 - **Security Hardening**: order-by whitelist, clamped pagination (1–100 rows), validated table names, and parameterized PDO queries throughout.
 - **Persistence Adapters**: PDO for production (MySQL/MariaDB/SQLite) and an in-memory repository for tests and prototypes.
@@ -49,16 +50,18 @@ $dispatcher = new EventDispatcher($provider);
 // 2. Build the service with any CommentRepositoryInterface implementation
 $comments = new CommentService(new PdoCommentRepository($pdo), $dispatcher);
 
-// 3. Create a top-level comment (starts as "pending")
+// 3. Create a top-level comment (starts as "pending") for tenant "acme"
 $comment = $comments->create(new CreateCommentRequest(
+    tenantId: 'acme',
     commentableType: 'content',
     commentableId: 42,
     authorId: 7,
     body: 'Great article!'
 ));
 
-// 4. Reply to it (parent must exist on the same target)
+// 4. Reply to it (parent must exist on the same target and tenant)
 $comments->create(new CreateCommentRequest(
+    tenantId: 'acme',
     commentableType: 'content',
     commentableId: 42,
     authorId: 8,
@@ -66,12 +69,23 @@ $comments->create(new CreateCommentRequest(
     parentId: $comment->getId()
 ));
 
-// 5. Moderate and read the public, approved listing
-$comments->moderate($comment->getId(), 'approved', moderatorId: 1);
-$approved = $comments->getComments('content', 42);
+// 5. Moderate and read the public, approved listing for the tenant
+$comments->moderate(
+    tenantId: 'acme',
+    id: $comment->getId(),
+    status: 'approved',
+    moderatorId: 1
+);
+$approved = $comments->getComments(
+    tenantId: 'acme',
+    commentableType: 'content',
+    commentableId: 42
+);
 ```
 
 The event dispatcher is optional. Pass `null` (or omit it) when the module is used without events.
+
+Methods take several `int|string` identifiers, so prefer named arguments (`tenantId:`, `id:`, `actorId:`) to avoid swapping them silently.
 
 ---
 
@@ -81,13 +95,15 @@ The event dispatcher is optional. Pass `null` (or omit it) when the module is us
 
 | Method | Behaviour |
 | --- | --- |
-| `create(CreateCommentRequest): Comment` | Creates a `pending` comment or reply and dispatches `CommentCreatedEvent`. |
-| `update(int\|string $id, string $body, int\|string $actorId): Comment` | The author edits the body; dispatches `CommentUpdatedEvent`. |
-| `delete(int\|string $id, int\|string $actorId, bool $asModerator = false, bool $softDelete = true): bool` | Author (or authorized moderator) deletes; dispatches `CommentDeletedEvent`. |
-| `moderate(int\|string $id, CommentStatus\|string $status, int\|string $moderatorId): Comment` | Applies `approved`, `rejected`, or `spam`; dispatches the matching moderation event. |
-| `getComments(string $type, int\|string $id, CommentStatus\|string\|null $status = CommentStatus::APPROVED, int $limit = 20, int $offset = 0): array` | Chronological listing for one target; approved by default. Pass `null` for all statuses. |
-| `getComment(int\|string $id, bool $includeTrashed = false): Comment` | Fetches one comment or throws `CommentNotFoundException`. |
-| `countComments(string $type, int\|string $id, CommentStatus\|string\|null $status = CommentStatus::APPROVED): int` | Counts comments for one target. |
+| `create(CreateCommentRequest): Comment` | Creates a `pending` comment or reply; the tenant comes from the request. Dispatches `CommentCreatedEvent`. |
+| `update(int\|string\|null $tenantId, int\|string $id, string $body, int\|string $actorId): Comment` | The author edits the body; dispatches `CommentUpdatedEvent`. |
+| `delete(int\|string\|null $tenantId, int\|string $id, int\|string $actorId, bool $asModerator = false, bool $softDelete = true): bool` | Author (or authorized moderator) deletes; dispatches `CommentDeletedEvent`. |
+| `moderate(int\|string\|null $tenantId, int\|string $id, CommentStatus\|string $status, int\|string $moderatorId): Comment` | Applies `approved`, `rejected`, or `spam`; dispatches the matching moderation event. |
+| `getComments(int\|string\|null $tenantId, string $type, int\|string $id, CommentStatus\|string\|null $status = CommentStatus::APPROVED, int $limit = 20, int $offset = 0): array` | Chronological listing for one target; approved by default. Pass `null` for all statuses. |
+| `getComment(int\|string\|null $tenantId, int\|string $id, bool $includeTrashed = false): Comment` | Fetches one comment or throws `CommentNotFoundException`. |
+| `countComments(int\|string\|null $tenantId, string $type, int\|string $id, CommentStatus\|string\|null $status = CommentStatus::APPROVED): int` | Counts comments for one target. |
+
+Every method accepts `tenantId: null` to run unscoped. See [Multi-Tenancy](#-multi-tenancy).
 
 ### Repository port
 
@@ -96,7 +112,7 @@ The event dispatcher is optional. Pass `null` (or omit it) when the module is us
 - `Infrastructure\Persistence\Pdo\PdoCommentRepository` (MySQL/MariaDB/SQLite).
 - `Infrastructure\Persistence\InMemory\InMemoryCommentRepository` (tests/prototypes).
 
-`save()` inserts a new comment and assigns its identifier. `update()`, `delete()`, and `restore()` return `false` when the comment no longer exists. `findAll()` and `count()` exclude soft-deleted comments; use `findById(..., includeTrashed: true)` or `findByTarget(..., includeTrashed: true)` to inspect trashed rows.
+`save()` inserts a new comment and assigns its identifier; `update()` takes the tenant from the entity. `delete()` and `restore()` return `false` when the comment does not exist within the tenant scope. `findAll()` and `count()` exclude soft-deleted comments and reject a `tenant_id` key in their criteria — tenancy is only expressible through the explicit `$tenantId` argument. Use `findById(..., includeTrashed: true)` or `findByTarget(..., includeTrashed: true)` to inspect trashed rows.
 
 ### Statuses
 
@@ -105,6 +121,31 @@ The event dispatcher is optional. Pass `null` (or omit it) when the module is us
 ### Authorization
 
 `update()` and `delete()` enforce author ownership in the application layer. `delete(..., asModerator: true)` skips the ownership check, so only set it after your own authorization policy has verified that the actor is a moderator. The same applies to `moderate()`: the caller is responsible for authorizing the moderator before invoking it.
+
+Tenant scoping is enforced by the repository layer: every ID-based lookup filters by `tenant_id`, so a comment from another tenant looks nonexistent (`CommentNotFoundException`) rather than forbidden. Updates also persist within the entity's tenant. A `null` tenant disables the filter entirely and can see and mutate rows of every tenant — use it only for trusted, unscoped contexts such as migration or administration tooling.
+
+---
+
+## 🏢 Multi-Tenancy
+
+Tenancy is optional and explicit. Pass the same `tenantId` on every operation for a tenant:
+
+```php
+$comments->getComments(tenantId: 'acme', commentableType: 'content', commentableId: 42);
+$comments->getComment(tenantId: 'acme', id: $id);
+$comments->update(tenantId: 'acme', id: $id, body: 'Edited', actorId: 7);
+```
+
+- **Isolation**: scoped reads and writes only match rows with that `tenant_id`. Fetching another tenant's ID returns `null`/`CommentNotFoundException`, so existence is not leaked.
+- **Unscoped mode**: `tenantId: null` disables the tenant predicate. It is intended for single-tenant installs and trusted administration jobs, not for request handling.
+- **Legacy rows**: comments created before tenancy (or with `tenantId: null`) have `tenant_id IS NULL` and are invisible to scoped callers. Backfill them before enabling tenancy:
+  ```sql
+  UPDATE comments SET tenant_id = 'acme' WHERE tenant_id IS NULL;
+  ```
+  Creating with `tenantId: null` while other tenants are active deliberately creates an unscoped row; scope those writes once tenancy is in use.
+- **Replies**: `CreateCommentUseCase` requires the parent to be in the same tenant. The database foreign key is parent-only, so it does not enforce this by itself.
+- **Indexes**: the composite tenant index is about 1 KB with `utf8mb4`, which requires an InnoDB `DYNAMIC` row format (the MySQL 5.7.7+/8 default).
+- **API shape**: `tenantId` is always an explicit argument (`int|string|null`). Prefer named arguments when a call also takes comment and actor IDs.
 
 ---
 
@@ -119,6 +160,7 @@ CREATE TABLE comments (
     commentable_id VARCHAR(100) NOT NULL,
     parent_id BIGINT UNSIGNED NULL,
     author_id BIGINT UNSIGNED NULL,
+    tenant_id VARCHAR(100) NULL,
     body TEXT NOT NULL,
     status ENUM('pending', 'approved', 'rejected', 'spam') NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -128,7 +170,7 @@ CREATE TABLE comments (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-Indexes: `(commentable_type, commentable_id, status, created_at)`, `(author_id, created_at)`, and `(status, created_at)`.
+Indexes: `(commentable_type, commentable_id, status, created_at)`, `(author_id, created_at)`, `(status, created_at)`, `(tenant_id, commentable_type, commentable_id, status, created_at)`, and `(tenant_id, author_id, created_at)`. The tenant-leading indexes overlap the original prefixes; they exist so scoped scans use `tenant_id` as the first key.
 
 The self-referencing foreign key cascades **hard** deletes to replies. Soft deletes affect only the selected comment, so approved replies remain visible in public listings; use a hard delete to remove the whole reply subtree. The migration is driver-aware and works on both MySQL/MariaDB and SQLite. SQLite enforces foreign keys only when the connection enables them, so run `PRAGMA foreign_keys = ON` on SQLite connections if you rely on the cascade.
 
@@ -149,7 +191,7 @@ $migrator->appliedMigrations();    // applied history
 
 Migrations are never run automatically by the module. Run them from your deployment process.
 
-> **Warning:** `rollback()` reverts the latest migration, and the initial migration's `down()` drops the `comments` table with all comment data. Back up the database before rolling back in production.
+> **Warning:** `rollback()` reverts only the latest migration (the tenant addition). Use `rollback(2)` to undo the initial migration, whose `down()` drops the `comments` table with all comment data. Back up the database before rolling back in production.
 
 ---
 

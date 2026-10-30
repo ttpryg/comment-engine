@@ -26,13 +26,14 @@ final class CreateCommentUseCase
             commentableId: $request->commentableId,
             authorId: $request->authorId,
             body: $request->body,
-            parentId: $request->parentId
+            parentId: $request->parentId,
+            tenantId: $request->tenantId
         );
 
         $parentId = $comment->getParentId();
 
         if ($parentId !== null) {
-            $parent = $this->commentRepository->findById($parentId);
+            $parent = $this->commentRepository->findById($request->tenantId, $parentId);
 
             if (! $parent instanceof Comment) {
                 throw CommentNotFoundException::byId($parentId);

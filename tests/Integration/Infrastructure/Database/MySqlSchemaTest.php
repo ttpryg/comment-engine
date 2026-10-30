@@ -52,31 +52,52 @@ class MySqlSchemaTest extends TestCase
     {
         $repository = new PdoCommentRepository($this->pdo);
 
-        $parent = $repository->save(new Comment('content', 10, 7, 'Parent', status: 'approved'));
+        $parent = $repository->save(new Comment(
+            'content',
+            10,
+            7,
+            'Parent',
+            status: 'approved',
+            tenantId: 'a'
+        ));
         $reply = $repository->save(new Comment(
             'content',
             10,
             8,
             'Reply',
             status: 'approved',
-            parentId: $this->idOf($parent)
+            parentId: $this->idOf($parent),
+            tenantId: 'a'
         ));
 
-        $this->assertCount(2, $repository->findByTarget('content', 10));
+        $this->assertCount(2, $repository->findByTarget(tenantId: 'a', commentableType: 'content', commentableId: 10));
+        $this->assertCount(0, $repository->findByTarget(tenantId: 'b', commentableType: 'content', commentableId: 10));
         $this->assertTrue($this->indexExists('idx_comments_target_status_created'));
+        $this->assertTrue($this->indexExists('idx_comments_tenant_target_status_created'));
+        $this->assertTrue($this->columnExists('comments', 'tenant_id'));
 
-        $this->assertTrue($repository->delete($this->idOf($parent), softDelete: false));
-        $this->assertNull($repository->findById($this->idOf($reply), includeTrashed: true));
+        $this->assertTrue($repository->delete(tenantId: 'a', id: $this->idOf($parent), softDelete: false));
+        $this->assertNull($repository->findById(
+            tenantId: 'a',
+            id: $this->idOf($reply),
+            includeTrashed: true
+        ));
     }
 
     public function test_mysql_migration_rolls_back_and_can_be_reapplied(): void
     {
         $migrator = new DatabaseMigrator($this->pdo);
 
-        $this->assertSame(['202610270001_create_comments_table'], $migrator->rollback());
+        $this->assertSame([
+            '202610300001_add_tenant_id_to_comments_table',
+            '202610270001_create_comments_table',
+        ], $migrator->rollback(2));
         $this->assertFalse($this->tableExists('comments'));
 
-        $this->assertSame(['202610270001_create_comments_table'], $migrator->migrate());
+        $this->assertSame([
+            '202610270001_create_comments_table',
+            '202610300001_add_tenant_id_to_comments_table',
+        ], $migrator->migrate());
         $this->assertTrue($this->tableExists('comments'));
     }
 
@@ -96,6 +117,17 @@ class MySqlSchemaTest extends TestCase
              WHERE table_schema = DATABASE() AND table_name = :table'
         );
         $stmt->execute(['table' => $table]);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = :table AND column_name = :column'
+        );
+        $stmt->execute(['table' => $table, 'column' => $column]);
 
         return (int) $stmt->fetchColumn() > 0;
     }
